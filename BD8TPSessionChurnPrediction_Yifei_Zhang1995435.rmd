@@ -1,0 +1,312 @@
+---
+title: "BD8 Projet de Session - Churn prediction"
+author: "Yifei Zhang"
+date: "06/10/2019"
+output: 
+  html_notebook:
+    toc: yes
+  html_document:
+    highlight: textmate
+    theme: spacelab
+    toc: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Nowadays churn predicition becomes very popular and important for many companies to analyse which customers will stop using their sevices so that they can adjuste their business to fit well the marketing.
+
+In this project, dataset([Churn_Modelling.csv](https://www.kaggle.com/aakash50897/churn-modellingcsv)) will be used to analyse churn prediction. 
+
+And these following modeles will be introduced:
+ 1, **Logistic Regression**
+ 2, **Decision Tree**
+ 3, **Random Forest**
+
+This report is also availible online, see <http://rpubs.com/jz8/Churnprediction>.
+
+# Data Processing
+## Load libraries
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+library(ggthemes)
+library(caret)
+library(plyr)
+library(corrplot)
+library(MASS)
+library(randomForest)
+library(party)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+```
+
+## Load data
+```{r}
+churn <- read.csv('Churn_Modelling.csv')
+dim(churn)
+```
+
+## Prepare the dataset
+
+
+```{r}
+names(churn)
+```
+
+
+```{r}
+str(churn)
+```
+```{r}
+head(churn)
+```
+
+
+```{r}
+sapply(churn, function(x) sum(is.na(x)))
+```
+
+```{r}
+churnData <- churn %>%  select(-c(RowNumber)) %>%  subset(!duplicated(churn$CustomerId))
+dim(churnData)
+```
+
+
+```{r}
+summary(churnData)
+```
+```{r}
+churnData$HasCrCard <- as.factor(mapvalues(churnData$HasCrCard, from = c("0", "1"), to = c("No", "Yes")))
+churnData$IsActiveMember <- as.factor(mapvalues(churnData$IsActiveMember, from = c("0", "1"), to = c("No", "Yes")))
+```
+
+Remove no useful variables.
+```{r}
+churnData$CustomerId <- NULL 
+churnData$Surname  <- NULL 
+```
+
+# Exploratory data
+## Correlation between numeric variables
+```{r}
+
+numeric_var <- sapply(churnData, is.numeric)
+corr_matrix <- cor(churnData[, numeric_var])
+corrplot(corr_matrix, main = "\n\nCorrelation Plot for Numerical Variables", method = "number")
+
+```
+
+These variables are not very correlated so that they are all kept.
+
+```{r}
+str(churnData)
+```
+
+```{r}
+p1 <- ggplot(churnData, aes(x=CreditScore )) + ggtitle("Credit Score ") + xlab("Credit Score ") +
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) +
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+p2 <- ggplot(churnData, aes(x=Geography)) + ggtitle("Geography") + 
+      xlab("Geography") + geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + ylab("Percentage") + coord_flip() + theme_minimal()
+
+p3 <- ggplot(churnData, aes(x=Gender)) + ggtitle("Gender") + xlab("Gender") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+p4 <- ggplot(churnData, aes(x=Age)) + ggtitle("Age") + xlab("Age") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, ncol=2)
+```
+```{r}
+p5 <- ggplot(churnData, aes(x=Tenure)) + ggtitle("Tenure") + 
+      xlab("Tenure") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+p6 <- ggplot(churnData, aes(x=NumOfProducts )) + ggtitle("Num Of Products ") + 
+      xlab("Multiple Lines") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Num Of Products ") + coord_flip() + theme_minimal()
+
+p7 <- ggplot(churnData, aes(x=HasCrCard)) + ggtitle("Has Credit Card") + 
+      xlab("Has Credit Card") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+p8 <- ggplot(churnData, aes(x=IsActiveMember)) + ggtitle("Is Active Member ") + 
+      xlab("Is Active Member ") + 
+      geom_bar(aes(y = 100*(..count..)/sum(..count..)), width = 0.5) + 
+      ylab("Percentage") + coord_flip() + theme_minimal()
+
+grid.arrange(p5, p6, p7, p8, ncol=2)
+```
+
+```{r}
+boxplot(churnData$EstimatedSalary, col = grey(0.9), main = "Estimated Salary", xlab = "Estimated Salary",ylab = "Effectif")
+abline(h = median(churnData$EstimatedSalary, na.rm = TRUE), col = "navy", lty = 2)
+text(1.35, median(churnData$EstimatedSalary, na.rm = TRUE) + 0.15, "Médiane", col = "navy")
+Q1 <- quantile(churnData$EstimatedSalary, probs = 0.25, na.rm = TRUE)
+abline(h = Q1, col = "darkred")
+text(1.35, Q1 + 0.15, "Q1 : premier quartile", col = "darkred", lty = 2)
+Q3 <- quantile(churnData$EstimatedSalary, probs = 0.75, na.rm = TRUE)
+abline(h = Q3, col = "darkred")
+text(1.35, Q3 + 0.15, "Q3 : troisième quartile", col = "darkred", lty = 2)
+arrows(x0 = 0.7, y0 = quantile(churnData$EstimatedSalary, probs = 0.75,
+                               na.rm = TRUE), x1 = 0.7, y1 = quantile(churnData$EstimatedSalary,
+                                                                      probs = 0.25, na.rm = TRUE), length = 0.1, code = 3)
+text(0.7, Q1 + (Q3 - Q1)/2 + 0.15, "h", pos = 2)
+mtext("L'écart inter-quartile h is about 100000", side = 1)
+```
+
+
+
+# Modeling
+## Logistic Regression
+
+### Logistic Regression analyse
+Split data into training and testing sets:
+```{r}
+trainIndex <- createDataPartition(churnData$Exited, p = .75, list = FALSE, times = 1)
+set.seed(2019)
+training <- churnData[trainIndex, ]
+testing <- churnData[- trainIndex, ]
+```
+Virifiy the 2 sets:
+```{r}
+dim(training)
+dim(testing)
+```
+
+Fitting the Logistic Regression Model:
+```{r}
+LogModel <- glm(Exited ~ ., family = binomial(link = "logit"), data = training)
+print(summary(LogModel))
+```
+
+Feature Analysis:
+```{r}
+anova(LogModel, test = "Chisq")
+```
+
+
+
+### Logistic Regression evaluation
+```{r}
+tableLR <- table(Actual=testing$Exited, prediction=fitted_results > 0.5)
+tableLR
+print(paste('Logistic Regression Accuracy',sum(diag(tableLR))/sum(tableLR)))
+print(paste('Logistic Regression precision',p1<-tableLR[2,2]/(tableLR[2,2]+tableLR[1,2])))
+print(paste('Logistic Regression recall',r1<-tableLR[2,2]/(tableLR[2,2]+tableLR[2,1])))
+print(paste('Logistic Regression F1Score',2*p1*r1/(r1+p1)))
+```
+
+Odds Ratio
+(performance measurements in logistic regression, what the odds of an event is happening.)
+```{r}
+exp(cbind(OR = coef(LogModel), confint(LogModel)))
+```
+
+## Decision Tree
+### Decision Tree analyse
+
+
+```{r}
+set.seed(91)
+DTree <- rpart(Exited ~ ., training, method="class")
+plotcp(DTree)
+```
+```{r}
+prp(DTree,extra=1)
+```
+
+
+
+### Decision Tree evaluation
+
+```{r}
+ 
+tableDT <- table(Actual = testing$Exited, Predicted = predict(DTree, testing, type="class"))
+tableDT
+
+print(paste('Decision Tree Accuracy',sum(diag(tableDT))/sum(tableDT)))
+print(paste('Decision Tree precision',p2<-tableDT[2,2]/(tableDT[2,2]+tableDT[1,2])))
+print(paste('Decision Tree recall',r2<-tableDT[2,2]/(tableDT[2,2]+tableDT[2,1])))
+print(paste('Decision Tree F1Score',2*p2*r2/(r2+p2)))
+```
+
+## Random Forest
+### Random Forest Initial Model
+
+```{r}
+rfModel <- randomForest(Exited ~., data = training)
+print(rfModel)
+```
+
+### Random Forest evaluation
+```{r}
+
+tableRF <- table(Actual = testing$Exited, Predicted = ifelse(predict(rfModel, testing) > 0.5, 1, 0))
+tableRF
+print(paste('Random Forest Accuracy',sum(diag(tableRF))/sum(tableRF)))
+print(paste('Random Forest precision',p3<-tableRF[2,2]/(tableRF[2,2]+tableRF[1,2])))
+print(paste('Random Forest recall',r3<-tableRF[2,2]/(tableRF[2,2]+tableRF[2,1])))
+print(paste('Random Forest F1Score',2*p3*r3/(r3+p3)))
+```
+
+### Random Forest Error Rate
+
+```{r}
+plot(rfModel)
+```
+### Tune Random Forest Model
+```{r}
+t <- tuneRF(training[, -10], training[, 10], stepFactor = 0.5, plot = TRUE,
+            ntreeTry = 100, trace = TRUE, improve = 0.05)
+```
+
+### Fit the Random Forest Model After Tuning
+
+```{r}
+rfModel_new <- randomForest(Exited ~., data = training, ntree = 100,
+                            mtry = 1, importance = TRUE, proximity = TRUE)
+print(rfModel_new)
+```
+
+### Random Forest evaluation After Tuning
+
+```{r}
+
+tableRFN <- table(Actual = testing$Exited, Predicted = ifelse(predict(rfModel_new, testing) > 0.5, 1, 0))
+tableRFN
+print(paste('New Random Forest Accuracy',sum(diag(tableRFN))/sum(tableRFN)))
+print(paste('New Random Forest precision',p4<-tableRFN[2,2]/(tableRFN[2,2]+tableRFN[1,2])))
+print(paste('New Random Forest recall',r4<-tableRFN[2,2]/(tableRFN[2,2]+tableRFN[2,1])))
+print(paste('New Random Forest F1Score',2*p4*r4/(r4+p4)))
+```
+
+### Random Forest Feature Importance
+
+```{r}
+varImpPlot(rfModel_new, sort=T, n.var = 5, main = 'Top 5 Feature Importance')
+```
+# Conclusion
+
+In this project, we use Logistic Regression, Decision Tree and Random Forest to analysis customer churn on this dataset. 
+As a result, 
+if we use precision to evaluate these models, tuned  Random Forest model has the best perfermance(0.95);
+if we use recall to evaluate these models,  Random Forest model has the best perfermance(0.46);
+if we use F1 Score to evaluate these models,  Random Forest model and decision tree model have the best perfermance(0.58); 
+if we use accuracy  to evaluate these models, Random Forest model and decision tree model has the best perfermance(0.86); 
